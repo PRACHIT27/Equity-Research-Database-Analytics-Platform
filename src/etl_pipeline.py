@@ -237,25 +237,129 @@ class EquityETLPipeline:
         
         if statement_id:
             # Insert income statement details
+            # query = """
+            # INSERT INTO IncomeStatements 
+            # (statement_id, revenue, cost_of_revenue, gross_profit, 
+            #  operating_expenses, operating_income, net_income, shares_outstanding)
+            # VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            # ON DUPLICATE KEY UPDATE
+            # revenue = VALUES(revenue),
+            # net_income = VALUES(net_income)
+            # """
+            
+            # params = (
+            #     statement_id,
+            #     self.safe_get(statement_data, 'Total Revenue'),
+            #     self.safe_get(statement_data, 'Cost Of Revenue'),
+            #     self.safe_get(statement_data, 'Gross Profit'),
+            #     self.safe_get(statement_data, 'Operating Expense'),
+            #     self.safe_get(statement_data, 'Operating Income'),
+            #     self.safe_get(statement_data, 'Net Income'),
+            #     self.safe_get(statement_data, 'Diluted Average Shares')
+            # )
+            
+            # self.execute_query(query, params)
+            # return True
+            
+            revenue = self.safe_get(statement_data, 'Total Revenue') or \
+                     self.safe_get(statement_data, 'Revenue')
+            
+            cost_of_revenue = self.safe_get(statement_data, 'Cost Of Revenue') or \
+                             self.safe_get(statement_data, 'Total Cost Of Revenue')
+            
+            gross_profit = self.safe_get(statement_data, 'Gross Profit')
+            
+            operating_expenses = self.safe_get(statement_data, 'Operating Expense') or \
+                                self.safe_get(statement_data, 'Total Operating Expenses') or \
+                                self.safe_get(statement_data, 'Operating Expenses')
+            
+            operating_income = self.safe_get(statement_data, 'Operating Income') or \
+                              self.safe_get(statement_data, 'EBIT')
+            
+            # Interest expense (may be negative in the data)
+            interest_expense = self.safe_get(statement_data, 'Interest Expense') or \
+                              self.safe_get(statement_data, 'Interest Expense Non Operating') or \
+                              self.safe_get(statement_data, 'Net Interest Income')
+            
+            # Income before tax
+            income_before_tax = self.safe_get(statement_data, 'Pretax Income') or \
+                               self.safe_get(statement_data, 'Income Before Tax') or \
+                               self.safe_get(statement_data, 'Earnings Before Tax')
+            
+            # Tax expense
+            income_tax_expense = self.safe_get(statement_data, 'Tax Provision') or \
+                                self.safe_get(statement_data, 'Income Tax Expense') or \
+                                self.safe_get(statement_data, 'Tax Effect Of Unusual Items')
+            
+            # Net income
+            net_income = self.safe_get(statement_data, 'Net Income') or \
+                        self.safe_get(statement_data, 'Net Income Common Stockholders')
+            
+            # Shares outstanding
+            shares_outstanding = self.safe_get(statement_data, 'Diluted Average Shares') or \
+                                self.safe_get(statement_data, 'Average Diluted Shares Outstanding') or \
+                                self.safe_get(statement_data, 'Diluted NI Availto Com Stockholders')
+            
+            # Basic shares (for EPS calculation)
+            basic_shares = self.safe_get(statement_data, 'Basic Average Shares') or \
+                          self.safe_get(statement_data, 'Average Basic Shares Outstanding') or \
+                          shares_outstanding  # Fallback to diluted
+            
+            # Calculate EPS if we have the data
+            eps_basic = None
+            eps_diluted = None
+            
+            if net_income is not None and basic_shares is not None and basic_shares > 0:
+                eps_basic = net_income / basic_shares
+            else:
+                # Try to get directly from data
+                eps_basic = self.safe_get(statement_data, 'Basic EPS') or \
+                           self.safe_get(statement_data, 'Earnings Per Share Basic')
+            
+            if net_income is not None and shares_outstanding is not None and shares_outstanding > 0:
+                eps_diluted = net_income / shares_outstanding
+            else:
+                # Try to get directly from data
+                eps_diluted = self.safe_get(statement_data, 'Diluted EPS') or \
+                             self.safe_get(statement_data, 'Earnings Per Share Diluted') or \
+                             eps_basic  # Fallback to basic EPS
+            
             query = """
-            INSERT INTO IncomeStatements 
-            (statement_id, revenue, cost_of_revenue, gross_profit, 
-             operating_expenses, operating_income, net_income, shares_outstanding)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-            revenue = VALUES(revenue),
-            net_income = VALUES(net_income)
-            """
+                INSERT INTO IncomeStatements 
+                (statement_id, revenue, cost_of_revenue, gross_profit, 
+                operating_expenses, operating_income, interest_expense,
+                income_before_tax, income_tax_expense, net_income, 
+                eps_basic, eps_diluted, shares_outstanding)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                revenue = VALUES(revenue),
+                cost_of_revenue = VALUES(cost_of_revenue),
+                gross_profit = VALUES(gross_profit),
+                operating_expenses = VALUES(operating_expenses),
+                operating_income = VALUES(operating_income),
+                interest_expense = VALUES(interest_expense),
+                income_before_tax = VALUES(income_before_tax),
+                income_tax_expense = VALUES(income_tax_expense),
+                net_income = VALUES(net_income),
+                eps_basic = VALUES(eps_basic),
+                eps_diluted = VALUES(eps_diluted),
+                shares_outstanding = VALUES(shares_outstanding)
+                """
             
             params = (
                 statement_id,
-                self.safe_get(statement_data, 'Total Revenue'),
-                self.safe_get(statement_data, 'Cost Of Revenue'),
-                self.safe_get(statement_data, 'Gross Profit'),
-                self.safe_get(statement_data, 'Operating Expense'),
-                self.safe_get(statement_data, 'Operating Income'),
-                self.safe_get(statement_data, 'Net Income'),
-                self.safe_get(statement_data, 'Diluted Average Shares')
+                revenue,
+                cost_of_revenue,
+                gross_profit,
+                operating_expenses,
+                operating_income,
+                interest_expense,
+                income_before_tax,
+                income_tax_expense,
+                net_income,
+                eps_basic,
+                eps_diluted,
+                shares_outstanding
             )
             
             self.execute_query(query, params)

@@ -358,7 +358,7 @@ elif page == "Stock Prices":
         ORDER BY trade_date ASC
         """
         
-        prices = execute_query(query, (company_id, days))
+        prices = execute_query(query, (str(company_id), days))
         
         if not prices.empty:
             # Price chart
@@ -452,7 +452,9 @@ elif page == "Financial Statements":
             LIMIT 12
             """
             
-            data = execute_query(query, (company_id,))
+            data = execute_query(query, (str(company_id),))
+            data = data.dropna()
+            print(data)
             
             if not data.empty:
                 # Convert to millions
