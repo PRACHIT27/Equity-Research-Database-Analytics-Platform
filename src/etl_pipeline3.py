@@ -10,7 +10,6 @@ from mysql.connector import Error
 from datetime import datetime, timedelta
 import time
 from decimal import Decimal
-import numpy as np
 import requests
 import json
 
@@ -35,10 +34,7 @@ class EquityETLPipeline:
             {'ticker': 'JPM', 'name': 'JPMorgan Chase & Co.', 'sector': 'Financial Services'},
             {'ticker': 'JNJ', 'name': 'Johnson & Johnson', 'sector': 'Healthcare'},
             {'ticker': 'TSLA', 'name': 'Tesla Inc.', 'sector': 'Consumer Discretionary'},
-            {'ticker': 'XOM', 'name': 'Exxon Mobil Corporation', 'sector': 'Energy'},
-            {'ticker': 'GME', 'name': 'GameStop Corp.', 'sector': 'Consumer Cyclical'},
-            {'ticker': 'BYND', 'name': 'BYD Company Ltd.', 'sector': 'Consumer Cyclical'},
-            {'ticker': 'CAVA', 'name': 'CAVA Group, Inc.', 'sector': 'Consumer Cyclical'},
+            {'ticker': 'XOM', 'name': 'Exxon Mobil Corporation', 'sector': 'Energy'}
         ]
     
     def connect(self):
@@ -143,7 +139,7 @@ class EquityETLPipeline:
         
         return company_id
     
-    def extract_stock_prices(self, ticker, period='5y'):
+    def extract_stock_prices(self, ticker, period='2y'):
         """Extract historical stock prices"""
         try:
             stock = yf.Ticker(ticker)
@@ -841,7 +837,16 @@ class EquityETLPipeline:
         return False
     
     def calculate_and_load_metrics(self, company_id, ticker):
-        """Calculate and load comprehensive valuation metrics from financial statements"""
+        """
+        Calculate and load comprehensive valuation metrics
+        
+        Args:
+            company_id: Company ID in database
+            ticker: Stock ticker symbol
+            
+        Returns:
+            Boolean indicating success
+        """
         try:
             stock = yf.Ticker(ticker)
             info = stock.info
@@ -856,212 +861,270 @@ class EquityETLPipeline:
             price_result = self.execute_query(query, (company_id,), fetch=True)
             
             if not price_result:
+                print(f"  ⚠ No stock price data found for metric calculations")
                 return False
             
             current_price = float(price_result[0]['close_price'])
             calc_date = price_result[0]['trade_date']
             
-            # Try to get metrics from Yahoo Finance first
-            pe_ratio = info.get('trailingPE') or info.get('forwardPE')
-            pb_ratio = info.get('priceToBook')
-            ps_ratio = info.get('priceToSalesTrailing12Months')
-            roe = info.get('returnOnEquity')
-            roa = info.get('returnOnAssets')
-            debt_to_equity = info.get('debtToEquity')
-            current_ratio = info.get('currentRatio')
-            quick_ratio = info.get('quickRatio')
+            # Get latest financial statement data for calculations
+            query = """
+            SELECT 
+                ins.revenue,
+                ins.net_income,
+                ins.shares_outstanding,
+                bs.total_assets,
+                bs.current_assets,
+                bs.current_liabilities,
+                bs.cash_and_equivalents,
+                bs.inventory,
+                bs.total_equity,
+                bs.long_term_debt,
+                bs.short_term_debt
+            FROM FinancialStatements fs
+            LEFT JOIN IncomeStatements ins ON fs.statement_id = ins.statement_id
+            LEFT JOIN BalanceSheets bs ON fs.statement_id = bs.statement_id
+            WHERE fs.company_id = %s 
+                AND fs.statement_type IN ('IncomeStatement', 'BalanceSheet')
+            ORDER BY fs.fiscal_year DESC, fs.fiscal_quarter DESC
+            LIMIT 1
+            """
             
-            # Get financial statement data to calculate missing metrics
-            financial_metrics = self._calculate_metrics_from_financials(company_id, current_price)
+            financial_result = self.execute_query(query, (company_id,), fetch=True)
             
-            # Merge metrics, preferring calculated values over Yahoo Finance when available
-            if financial_metrics:
-                pe_ratio = pe_ratio or financial_metrics.get('pe_ratio')
-                pb_ratio = pb_ratio or financial_metrics.get('pb_ratio')
-                ps_ratio = ps_ratio or financial_metrics.get('ps_ratio')
-                roe = roe or financial_metrics.get('roe')
-                roa = roa or financial_metrics.get('roa')
-                debt_to_equity = debt_to_equity or financial_metrics.get('debt_to_equity')
-                current_ratio = current_ratio or financial_metrics.get('current_ratio')
-                quick_ratio = quick_ratio or financial_metrics.get('quick_ratio')
-                gross_margin = financial_metrics.get('gross_margin')
-                operating_margin = financial_metrics.get('operating_margin')
-                net_margin = financial_metrics.get('net_margin')
-            else:
-                gross_margin = None
-                operating_margin = None
-                net_margin = None
+            if not financial_result or not financial_result[0]:
+                print(f"  ⚠ No financial statement data found for metric calculations")
+                return False
             
-            # Convert percentages to decimal form if they're in decimal
-            if roe and roe > 1:
-                roe = roe / 100
-            if roa and roa > 1:
-                roa = roa / 100
-            if gross_margin and gross_margin > 1:
-                gross_margin = gross_margin / 100
-            if operating_margin and operating_margin > 1:
-                operating_margin = operating_margin / 100
-            if net_margin and net_margin > 1:
-                net_margin = net_margin / 100
+            fin_data = financial_result[0]
             
+            # Extract financial values
+            revenue = self.safe_get_metric(fin_data, 'revenue')
+            net_income = self.safe_get_metric(fin_data, 'net_income')
+            shares_outstanding = self.safe_get_metric(fin_data, 'shares_outstanding')
+            total_assets = self.safe_get_metric(fin_data, 'total_assets')
+            current_assets = self.safe_get_metric(fin_data, 'current_assets')
+            current_liabilities = self.safe_get_metric(fin_data, 'current_liabilities')
+            cash_and_equivalents = self.safe_get_metric(fin_data, 'cash_and_equivalents')
+            inventory = self.safe_get_metric(fin_data, 'inventory')
+            total_equity = self.safe_get_metric(fin_data, 'total_equity')
+            long_term_debt = self.safe_get_metric(fin_data, 'long_term_debt') or 0
+            short_term_debt = self.safe_get_metric(fin_data, 'short_term_debt') or 0
+            
+            print(f"  Calculating metrics from financial data...")
+            
+            # Calculate Market Cap
+            market_cap = None
+            if shares_outstanding:
+                market_cap = current_price * shares_outstanding
+            
+            # 1. P/E Ratio (Price-to-Earnings)
+            pe_ratio = None
+            earnings_per_share = None
+            if net_income and shares_outstanding and shares_outstanding > 0:
+                earnings_per_share = net_income / shares_outstanding
+                if earnings_per_share > 0:
+                    pe_ratio = current_price / earnings_per_share
+            
+            # Try from API if calculation failed
+            if pe_ratio is None:
+                pe_ratio = info.get('trailingPE')
+            
+            # 2. P/B Ratio (Price-to-Book)
+            pb_ratio = None
+            book_value_per_share = None
+            if total_equity and shares_outstanding and shares_outstanding > 0:
+                book_value_per_share = total_equity / shares_outstanding
+                if book_value_per_share > 0:
+                    pb_ratio = current_price / book_value_per_share
+            
+            # Try from API if calculation failed
+            if pb_ratio is None:
+                pb_ratio = info.get('priceToBook')
+            
+            # 3. P/S Ratio (Price-to-Sales)
+            ps_ratio = None
+            sales_per_share = None
+            if revenue and shares_outstanding and shares_outstanding > 0:
+                sales_per_share = revenue / shares_outstanding
+                if sales_per_share > 0:
+                    ps_ratio = current_price / sales_per_share
+            
+            # Try from API if calculation failed
+            if ps_ratio is None:
+                ps_ratio = info.get('priceToSalesTrailing12Months')
+            
+            # 4. ROE (Return on Equity)
+            roe = None
+            if net_income and total_equity and total_equity > 0:
+                roe = (net_income / total_equity) * 100  # Convert to percentage
+            
+            # Try from API if calculation failed
+            if roe is None:
+                api_roe = info.get('returnOnEquity')
+                if api_roe:
+                    roe = api_roe * 100  # API returns as decimal
+            
+            # 5. ROA (Return on Assets)
+            roa = None
+            if net_income and total_assets and total_assets > 0:
+                roa = (net_income / total_assets) * 100  # Convert to percentage
+            
+            # Try from API if calculation failed
+            if roa is None:
+                api_roa = info.get('returnOnAssets')
+                if api_roa:
+                    roa = api_roa * 100  # API returns as decimal
+            
+            # 6. Debt-to-Equity Ratio
+            debt_to_equity = None
+            total_debt = long_term_debt + short_term_debt
+            if total_debt and total_equity and total_equity > 0:
+                debt_to_equity = total_debt / total_equity
+            
+            # Try from API if calculation failed
+            if debt_to_equity is None:
+                debt_to_equity = info.get('debtToEquity')
+                if debt_to_equity:
+                    debt_to_equity = debt_to_equity / 100  # API returns as percentage
+            
+            # 7. Current Ratio
+            current_ratio = None
+            if current_assets and current_liabilities and current_liabilities > 0:
+                current_ratio = current_assets / current_liabilities
+            
+            # Try from API if calculation failed
+            if current_ratio is None:
+                current_ratio = info.get('currentRatio')
+            
+            # 8. Quick Ratio (Acid Test Ratio)
+            quick_ratio = None
+            if current_assets and inventory is not None and current_liabilities and current_liabilities > 0:
+                quick_assets = current_assets - inventory
+                quick_ratio = quick_assets / current_liabilities
+            elif cash_and_equivalents and current_liabilities and current_liabilities > 0:
+                # Simplified quick ratio using cash only
+                quick_ratio = cash_and_equivalents / current_liabilities
+            
+            # Try from API if calculation failed
+            if quick_ratio is None:
+                quick_ratio = info.get('quickRatio')
+            
+            # 9. Gross Margin
+            gross_margin = None
+            api_gross_margin = info.get('grossMargins')
+            if api_gross_margin:
+                gross_margin = api_gross_margin * 100  # Convert to percentage
+            
+            # 10. Operating Margin
+            operating_margin = None
+            api_operating_margin = info.get('operatingMargins')
+            if api_operating_margin:
+                operating_margin = api_operating_margin * 100  # Convert to percentage
+            
+            # 11. Net Margin (Profit Margin)
+            net_margin = None
+            if net_income and revenue and revenue > 0:
+                net_margin = (net_income / revenue) * 100  # Convert to percentage
+            
+            # Try from API if calculation failed
+            if net_margin is None:
+                api_net_margin = info.get('profitMargins')
+                if api_net_margin:
+                    net_margin = api_net_margin * 100  # API returns as decimal
+            
+            # Log calculated metrics
+            metrics_calculated = sum([
+                pe_ratio is not None,
+                pb_ratio is not None,
+                ps_ratio is not None,
+                roe is not None,
+                roa is not None,
+                debt_to_equity is not None,
+                current_ratio is not None,
+                quick_ratio is not None,
+                gross_margin is not None,
+                operating_margin is not None,
+                net_margin is not None
+            ])
+            
+            print(f"  Successfully calculated {metrics_calculated}/11 metrics")
+            
+            # Insert metrics into database
             query = """
             INSERT INTO ValuationMetrics 
-            (company_id, calculation_date, pe_ratio, pb_ratio, ps_ratio, roe, roa,
-             debt_to_equity, current_ratio, quick_ratio, gross_margin, operating_margin, net_margin)
+            (company_id, calculation_date, pe_ratio, pb_ratio, ps_ratio, 
+             roe, roa, debt_to_equity, current_ratio, quick_ratio,
+             gross_margin, operating_margin, net_margin)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
-            pe_ratio = COALESCE(VALUES(pe_ratio), pe_ratio),
-            pb_ratio = COALESCE(VALUES(pb_ratio), pb_ratio),
-            ps_ratio = COALESCE(VALUES(ps_ratio), ps_ratio),
-            roe = COALESCE(VALUES(roe), roe),
-            roa = COALESCE(VALUES(roa), roa),
-            debt_to_equity = COALESCE(VALUES(debt_to_equity), debt_to_equity),
-            current_ratio = COALESCE(VALUES(current_ratio), current_ratio),
-            quick_ratio = COALESCE(VALUES(quick_ratio), quick_ratio),
-            gross_margin = COALESCE(VALUES(gross_margin), gross_margin),
-            operating_margin = COALESCE(VALUES(operating_margin), operating_margin),
-            net_margin = COALESCE(VALUES(net_margin), net_margin)
+            pe_ratio = VALUES(pe_ratio),
+            pb_ratio = VALUES(pb_ratio),
+            ps_ratio = VALUES(ps_ratio),
+            roe = VALUES(roe),
+            roa = VALUES(roa),
+            debt_to_equity = VALUES(debt_to_equity),
+            current_ratio = VALUES(current_ratio),
+            quick_ratio = VALUES(quick_ratio),
+            gross_margin = VALUES(gross_margin),
+            operating_margin = VALUES(operating_margin),
+            net_margin = VALUES(net_margin)
             """
             
             params = (
                 company_id,
                 calc_date,
-                float(pe_ratio) if pe_ratio else None,
-                float(pb_ratio) if pb_ratio else None,
-                float(ps_ratio) if ps_ratio else None,
-                float(roe) if roe else None,
-                float(roa) if roa else None,
-                float(debt_to_equity) if debt_to_equity else None,
-                float(current_ratio) if current_ratio else None,
-                float(quick_ratio) if quick_ratio else None,
-                float(gross_margin) if gross_margin else None,
-                float(operating_margin) if operating_margin else None,
-                float(net_margin) if net_margin else None
+                pe_ratio,
+                pb_ratio,
+                ps_ratio,
+                roe,
+                roa,
+                debt_to_equity,
+                current_ratio,
+                quick_ratio,
+                gross_margin,
+                operating_margin,
+                net_margin
             )
             
-            if self.execute_query(query, params):
-                metrics_count = sum([1 for m in [pe_ratio, pb_ratio, ps_ratio, roe, roa, 
-                                                   debt_to_equity, current_ratio, quick_ratio,
-                                                   gross_margin, operating_margin, net_margin] if m])
-                print(f"    ✓ Valuation metrics loaded ({metrics_count} metrics populated)")
+            result = self.execute_query(query, params)
+            
+            if result is not None:
                 return True
             else:
-                print(f"    ⚠ Failed to load valuation metrics")
+                print(f"  ⚠ Failed to insert valuation metrics")
                 return False
             
         except Exception as e:
-            print(f"✗ Error calculating metrics for {ticker}: {e}")
+            print(f"  ✗ Error calculating metrics for {ticker}: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
-    def _calculate_metrics_from_financials(self, company_id, current_price):
+    def safe_get_metric(self, data_dict, key):
         """
-        Calculate valuation metrics from latest financial statements
+        Safely extract metric value from dictionary
         
         Args:
-            company_id: Company ID in database
-            current_price: Current stock price
+            data_dict: Dictionary containing metric data
+            key: Key to extract
             
         Returns:
-            Dictionary with calculated metrics
+            Float value or None
         """
         try:
-            # Get latest income statement
-            income_query = """
-            SELECT ist.revenue, ist.gross_profit, ist.operating_income, ist.net_income, ist.eps_diluted
-            FROM IncomeStatements ist
-            JOIN FinancialStatements fs ON ist.statement_id = fs.statement_id
-            WHERE fs.company_id = %s AND fs.statement_type = 'IncomeStatement'
-            ORDER BY fs.fiscal_year DESC, fs.fiscal_quarter DESC
-            LIMIT 1
-            """
-            income_result = self.execute_query(income_query, (company_id,), fetch=True)
-            
-            # Get latest balance sheet
-            balance_query = """
-            SELECT bs.total_assets, bs.current_assets, bs.inventory, bs.total_liabilities,
-                   bs.current_liabilities, bs.total_equity
-            FROM BalanceSheets bs
-            JOIN FinancialStatements fs ON bs.statement_id = fs.statement_id
-            WHERE fs.company_id = %s AND fs.statement_type = 'BalanceSheet'
-            ORDER BY fs.fiscal_year DESC, fs.fiscal_quarter DESC
-            LIMIT 1
-            """
-            balance_result = self.execute_query(balance_query, (company_id,), fetch=True)
-            
-            if not income_result or not balance_result:
+            value = data_dict.get(key)
+            if value is None:
+                return None
+            if pd.isna(value):
                 return None
             
-            income = income_result[0] if income_result else {}
-            balance = balance_result[0] if balance_result else {}
+            float_val = float(value)
+            if np.isinf(float_val) or np.isnan(float_val):
+                return None
             
-            metrics = {}
-            
-            # Revenue and profitability metrics
-            revenue = income.get('revenue')
-            gross_profit = income.get('gross_profit')
-            operating_income = income.get('operating_income')
-            net_income = income.get('net_income')
-            eps = income.get('eps_diluted')
-            
-            # Balance sheet metrics
-            total_assets = balance.get('total_assets')
-            current_assets = balance.get('current_assets')
-            inventory = balance.get('inventory')
-            total_liabilities = balance.get('total_liabilities')
-            current_liabilities = balance.get('current_liabilities')
-            total_equity = balance.get('total_equity')
-            
-            # Calculate P/E Ratio
-            if eps and eps > 0:
-                metrics['pe_ratio'] = current_price / eps
-            
-            # Calculate P/B Ratio (Price / Book Value per Share)
-            if total_equity and eps:
-                book_value_per_share = total_equity / (eps * current_price) if eps > 0 else None
-                if book_value_per_share and book_value_per_share > 0:
-                    metrics['pb_ratio'] = current_price / book_value_per_share
-            
-            # Calculate P/S Ratio (Price / Sales per Share)
-            if revenue and eps:
-                sales_per_share = revenue / (eps * current_price) if eps > 0 else None
-                if sales_per_share and sales_per_share > 0:
-                    metrics['ps_ratio'] = current_price / sales_per_share
-            
-            # Calculate ROE (Return on Equity)
-            if net_income and total_equity and total_equity > 0:
-                metrics['roe'] = net_income / total_equity
-            
-            # Calculate ROA (Return on Assets)
-            if net_income and total_assets and total_assets > 0:
-                metrics['roa'] = net_income / total_assets
-            
-            # Calculate Debt to Equity
-            if total_liabilities and total_equity and total_equity > 0:
-                metrics['debt_to_equity'] = total_liabilities / total_equity
-            
-            # Calculate Current Ratio
-            if current_assets and current_liabilities and current_liabilities > 0:
-                metrics['current_ratio'] = current_assets / current_liabilities
-            
-            # Calculate Quick Ratio
-            if current_assets and inventory and current_liabilities and current_liabilities > 0:
-                quick_assets = current_assets - inventory
-                metrics['quick_ratio'] = quick_assets / current_liabilities
-            
-            # Calculate Profit Margins
-            if gross_profit and revenue and revenue > 0:
-                metrics['gross_margin'] = gross_profit / revenue
-            
-            if operating_income and revenue and revenue > 0:
-                metrics['operating_margin'] = operating_income / revenue
-            
-            if net_income and revenue and revenue > 0:
-                metrics['net_margin'] = net_income / revenue
-            
-            return metrics if metrics else None
-            
-        except Exception as e:
-            print(f"    ⚠ Could not calculate metrics from financials: {e}")
+            return float_val
+        except:
             return None
     
     def safe_get(self, data, key):
@@ -1100,518 +1163,13 @@ class EquityETLPipeline:
             pass
         return None
     
-    # ==================== FORECAST METHODS ====================
-    
-    def calculate_stock_price_forecast(self, price_data, company_id=None, periods_ahead=30, cutoff_index=None):
-        """
-        Forecast stock price, EPS, and revenue using multiple mathematical models
-        
-        Args:
-            price_data: DataFrame with stock price history
-            company_id: Company ID in database (for EPS/Revenue forecasting, optional)
-            periods_ahead: Number of days to forecast ahead (default: 30 days)
-            cutoff_index: Index up to which historical data to use (for historical backtesting)
-                         If None, uses all available data
-            
-        Returns:
-            Dictionary with comprehensive forecast data including price, EPS, and revenue
-        """
-        try:
-            if price_data is None or price_data.empty or len(price_data) < 20:
-                return None
-            
-            # Sort by date to ensure correct order
-            price_data = price_data.sort_values('Date').reset_index(drop=True)
-            
-            # Use only data up to cutoff_index if provided (for historical forecasts)
-            if cutoff_index is not None:
-                if cutoff_index < 20:
-                    return None
-                historical_data = price_data.iloc[:cutoff_index]
-            else:
-                historical_data = price_data
-            
-            close_prices = historical_data['Close'].values
-            dates = historical_data['Date'].values
-            
-            # Model 1: Exponential Weighted Moving Average (EWMA)
-            ewma_prices = pd.Series(close_prices).ewm(span=20).mean()
-            ewma_current = ewma_prices.iloc[-1]
-            
-            # Model 2: Linear Regression Trend
-            x = np.arange(len(close_prices)).reshape(-1, 1)
-            from numpy.polynomial import Polynomial
-            
-            # Fit polynomial trend (degree 2)
-            coeffs = np.polyfit(np.arange(len(close_prices)), close_prices, 2)
-            poly = np.poly1d(coeffs)
-            
-            # Get trend direction
-            recent_trend = (close_prices[-1] - close_prices[-20]) / close_prices[-20] * 100
-            
-            # Model 3: Mean Reversion with Volatility
-            sma_20 = pd.Series(close_prices).rolling(window=20).mean().iloc[-1]
-            sma_50 = pd.Series(close_prices).rolling(window=50).mean().iloc[-1] if len(close_prices) >= 50 else sma_20
-            volatility = pd.Series(close_prices).pct_change().std() * np.sqrt(252)  # Annualized
-            
-            # Calculate forecast
-            current_price = close_prices[-1]
-            trend_strength = recent_trend / 100
-            
-            # Blended forecast: 40% EWMA, 30% trend continuation, 30% mean reversion
-            ewma_forecast = ewma_current * (1 + trend_strength * 0.3)  # Dampened trend
-            trend_forecast = current_price * (1 + trend_strength * 0.2)
-            mr_forecast = (sma_20 + sma_50) / 2 * (1 + trend_strength * 0.1)
-            
-            target_price = (ewma_forecast * 0.4 + trend_forecast * 0.3 + mr_forecast * 0.3)
-            
-            # Calculate confidence score based on trend consistency and volatility
-            price_momentum = abs(recent_trend) / 100
-            volatility_factor = 1 / (1 + volatility)  # Lower volatility = higher confidence
-            confidence = min(0.95, 0.5 + price_momentum * 0.3 + volatility_factor * 0.2)
-            
-            # Generate recommendation
-            price_change_pct = (target_price - current_price) / current_price * 100
-            
-            if price_change_pct > 15:
-                recommendation = 'Strong Buy'
-            elif price_change_pct > 7:
-                recommendation = 'Buy'
-            elif price_change_pct < -15:
-                recommendation = 'Strong Sell'
-            elif price_change_pct < -7:
-                recommendation = 'Sell'
-            else:
-                recommendation = 'Hold'
-            
-            # Initialize forecast dictionary with price data
-            forecast_dict = {
-                'target_price': float(target_price),
-                'current_price': float(current_price),
-                'price_change_pct': float(price_change_pct),
-                'confidence_score': float(confidence),
-                'recommendation': recommendation,
-                'volatility': float(volatility),
-                'trend_strength': float(trend_strength),
-                'sma_20': float(sma_20),
-                'sma_50': float(sma_50)
-            }
-            
-            # Calculate EPS and Revenue forecasts if company_id is provided
-            if company_id is not None:
-                eps_forecast = self.calculate_eps_forecast(company_id, None)
-                print("EPS Forecast:", eps_forecast)
-                revenue_forecast = self.calculate_revenue_forecast(company_id)
-                
-                # Add EPS forecast data to dictionary
-                if eps_forecast:
-                    forecast_dict['eps_current'] = eps_forecast.get('current_eps')
-                    forecast_dict['eps_forecasted'] = eps_forecast.get('forecasted_eps')
-                    forecast_dict['eps_growth_rate'] = eps_forecast.get('growth_rate')
-                    forecast_dict['eps_dampened_growth'] = eps_forecast.get('dampened_growth_rate')
-                else:
-                    forecast_dict['eps_current'] = None
-                    forecast_dict['eps_forecasted'] = None
-                    forecast_dict['eps_growth_rate'] = None
-                    forecast_dict['eps_dampened_growth'] = None
-                
-                # Add Revenue forecast data to dictionary
-                if revenue_forecast:
-                    forecast_dict['revenue_last_quarter'] = revenue_forecast.get('last_quarter_revenue')
-                    forecast_dict['revenue_annualized'] = revenue_forecast.get('annualized_revenue')
-                    forecast_dict['revenue_forecasted'] = revenue_forecast.get('forecasted_annual_revenue')
-                    forecast_dict['revenue_growth_rate'] = revenue_forecast.get('growth_rate')
-                else:
-                    forecast_dict['revenue_last_quarter'] = None
-                    forecast_dict['revenue_annualized'] = None
-                    forecast_dict['revenue_forecasted'] = None
-                    forecast_dict['revenue_growth_rate'] = None
-            
-            return forecast_dict
-            
-        except Exception as e:
-            print(f"Error calculating stock price forecast: {e}")
-            return None
-    
-    def calculate_eps_forecast(self, company_id, ticker):
-        """
-        Forecast EPS using historical growth rates and financial trends
-        
-        Args:
-            company_id: Company ID in database
-            ticker: Stock ticker symbol
-            
-        Returns:
-            Dictionary with EPS forecast data
-        """
-        try:
-            # Get last 4 quarters of EPS data
-            query = """
-            SELECT ist.eps_diluted, fs.fiscal_quarter, fs.fiscal_year
-            FROM IncomeStatements ist
-            JOIN FinancialStatements fs ON ist.statement_id = fs.statement_id
-            WHERE fs.company_id = %s AND fs.statement_type = 'IncomeStatement'
-            ORDER BY fs.fiscal_year DESC, fs.fiscal_quarter DESC
-            LIMIT 4
-            """
-            
-            results = self.execute_query(query, (company_id,), fetch=True)
-            
-            if not results or len(results) < 2:
-                return None
-            
-            eps_values = [r['eps_diluted'] for r in results if r['eps_diluted'] is not None]
-            
-            if len(eps_values) < 2:
-                return None
-            
-            eps_values = list(reversed(eps_values))  # Chronological order
-            print("EPS Values for Forecasting type:", type(eps_values[0]))
-            eps_values = [float(d) for d in eps_values]
-            print("EPS Values for Forecasting type:", type(eps_values[0]))
-            
-            # Calculate growth rate
-            if len(eps_values) >= 2:
-                # Use compound growth rate
-                quarterly_growth_rates = []
-                for i in range(1, len(eps_values)):
-                    if eps_values[i-1] != 0:
-                        growth = (eps_values[i] - eps_values[i-1]) / abs(eps_values[i-1])
-                        quarterly_growth_rates.append(growth)
-                
-                if quarterly_growth_rates:
-                    avg_growth = np.mean(quarterly_growth_rates)
-                    # Assume next 4 quarters follow similar trend (with dampening)
-                    current_eps = eps_values[-1]
-                    dampened_growth = avg_growth * 0.7  # Dampen future growth
-                    next_eps = current_eps * (1 + dampened_growth * 4)  # 4 quarters ahead
-                    print("------------------------------------------------")
-                    return {
-                        'current_eps': float(current_eps),
-                        'forecasted_eps': float(next_eps),
-                        'growth_rate': float(avg_growth * 100),  # Percentage
-                        'dampened_growth_rate': float(dampened_growth * 4 * 100)
-                    }
-        
-        except Exception as e:
-            print(f"Error calculating EPS forecast: {e}")
-            return None
-        
-        return None
-    
-    def calculate_revenue_forecast(self, company_id):
-        """
-        Forecast annual revenue based on historical growth and financial statements
-        
-        Args:
-            company_id: Company ID in database
-            
-        Returns:
-            Dictionary with revenue forecast data
-        """
-        try:
-            # Get last 4 quarters of revenue data
-            query = """
-            SELECT ist.revenue, fs.fiscal_year, fs.fiscal_quarter
-            FROM IncomeStatements ist
-            JOIN FinancialStatements fs ON ist.statement_id = fs.statement_id
-            WHERE fs.company_id = %s AND fs.statement_type = 'IncomeStatement' 
-            AND ist.revenue IS NOT NULL
-            ORDER BY fs.fiscal_year DESC, fs.fiscal_quarter DESC
-            LIMIT 4
-            """
-            
-            results = self.execute_query(query, (company_id,), fetch=True)
-            
-            if not results or len(results) < 2:
-                return None
-            
-            revenue_values = [r['revenue'] for r in results if r['revenue'] is not None]
-            
-            if len(revenue_values) < 2:
-                return None
-            
-            revenue_values = list(reversed(revenue_values))  # Chronological order
-            revenue_values = [float(d) for d in revenue_values]
-            
-            # Calculate growth rate
-            quarterly_growth_rates = []
-            for i in range(1, len(revenue_values)):
-                if revenue_values[i-1] > 0:
-                    growth = (revenue_values[i] - revenue_values[i-1]) / revenue_values[i-1]
-                    quarterly_growth_rates.append(growth)
-            
-            if quarterly_growth_rates:
-                avg_growth = np.mean(quarterly_growth_rates)
-                # Project next 4 quarters
-                current_revenue = revenue_values[-1]
-                dampened_growth = avg_growth * 0.75  # Dampen growth projection
-                annualized_revenue = revenue_values[-1] * 4  # Annualize last quarter
-                next_year_revenue = annualized_revenue * (1 + dampened_growth * 4)
-                
-                return {
-                    'last_quarter_revenue': float(current_revenue),
-                    'annualized_revenue': float(annualized_revenue),
-                    'forecasted_annual_revenue': float(next_year_revenue),
-                    'growth_rate': float(avg_growth * 100)
-                }
-        
-        except Exception as e:
-            print(f"Error calculating revenue forecast: {e}")
-            return None
-        
-        return None
-    
-    def load_forecast(self, company_id, forecast_data, revenue_forecast, eps_forecast, 
-                      forecast_date=None, target_date=None):
-        """
-        Load forecast data into Forecasts table
-        
-        Args:
-            company_id: Company ID
-            forecast_data: Dictionary with stock price forecast
-            revenue_forecast: Dictionary with revenue forecast
-            eps_forecast: Dictionary with EPS forecast
-            forecast_date: Date when forecast is made (default: today)
-            target_date: Target date for forecast (default: 30 days from forecast_date)
-            
-        Returns:
-            Boolean indicating success
-        """
-        try:
-            query = """
-            INSERT INTO Forecasts
-            (company_id, forecast_date, target_date, target_price, 
-             revenue_forecast, eps_forecast, recommendation, confidence_score, model_version)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Mathematical-v1.0')
-            """
-            if forecast_date is None:
-                forecast_date = datetime.now().date()
-            if target_date is None:
-                target_date = forecast_date + timedelta(days=30)
-            
-            target_price = forecast_data.get('target_price') if forecast_data else None
-            revenue = revenue_forecast.get('forecasted_annual_revenue') if revenue_forecast else None
-            eps = eps_forecast.get('eps_forecasted') if eps_forecast else None
-            recommendation = forecast_data.get('recommendation', 'Hold') if forecast_data else 'Hold'
-            confidence = forecast_data.get('confidence_score', 0.5) if forecast_data else 0.5
-            
-            params = (
-                company_id,
-                forecast_date,
-                target_date,
-                target_price,
-                revenue_forecast["forecasted_annual_revenue"],
-                eps_forecast["forecasted_eps"],
-                recommendation,
-                confidence
-            )
-            print("inside loading forecast eps_forecast:", eps_forecast)
-            print("inside loading forecast revenue_forecast:", revenue_forecast)
-            print("Loading forecast with params:", params)
-            
-            if self.execute_query(query, params):
-                return True
-            else:
-                return False
-                
-        except Exception as e:
-            print(f"Error loading forecast: {e}")
-            return False
-    
-    def generate_and_load_forecasts(self, company_id, ticker, periodic=False):
-        """
-        Generate all forecasts for a company and load to database
-        
-        Args:
-            company_id: Company ID in database
-            ticker: Stock ticker symbol
-            periodic: If True, generate forecasts for every 15 days in historical data range
-                     If False, generate only current forecast
-            
-        Returns:
-            Boolean indicating success
-        """
-        try:
-            # Get historical price data
-            price_data = self.extract_stock_prices(ticker, period='5y')
-            
-            if price_data is None or price_data.empty:
-                print(f"⚠ No price data available for {ticker} forecast")
-                return False
-            
-            price_data = price_data.sort_values('Date').reset_index(drop=True)
-            
-            if periodic:
-                return self._generate_periodic_forecasts(company_id, ticker, price_data)
-            else:
-                return self._generate_current_forecast(company_id, ticker, price_data)
-                
-        except Exception as e:
-            print(f"Error generating forecasts for {ticker}: {e}")
-            return False
-    
-    def _generate_current_forecast(self, company_id, ticker, price_data):
-        """
-        Generate current forecast using all available historical data
-        
-        Args:
-            company_id: Company ID
-            ticker: Stock ticker
-            price_data: Historical price DataFrame
-            
-        Returns:
-            Boolean indicating success
-        """
-        try:
-            # Calculate all forecasts using current data (integrated in stock price forecast)
-            stock_forecast = self.calculate_stock_price_forecast(price_data, company_id=company_id)
-            print(f"\n  Current Forecast for {ticker}: {stock_forecast}")
-            if stock_forecast:
-                # Load forecast to database
-                # Extract price, EPS, and revenue forecasts from the integrated calculation
-                price_forecast_data = {
-                    'target_price': stock_forecast.get('target_price'),
-                    'recommendation': stock_forecast.get('recommendation'),
-                    'confidence_score': stock_forecast.get('confidence_score')
-                }
-                
-                revenue_forecast_data = {
-                    'forecasted_annual_revenue': stock_forecast.get('revenue_forecasted')
-                }
-                
-                eps_forecast_data = {
-                    'forecasted_eps': stock_forecast.get('eps_forecasted')
-                }
-                
-                if self.load_forecast(company_id, price_forecast_data, revenue_forecast_data, eps_forecast_data):
-                    print(f"  Target Price: ${stock_forecast['target_price']:.2f} | " +
-                          f"Recommendation: {stock_forecast['recommendation']} | " +
-                          f"Confidence: {stock_forecast['confidence_score']:.2%}")
-                    if stock_forecast.get('eps_forecasted'):
-                        print(f"  EPS Forecast: ${stock_forecast['eps_forecasted']:.4f} (Growth: {stock_forecast.get('eps_dampened_growth', 0):.2f}%)")
-                    if stock_forecast.get('revenue_forecasted'):
-                        print(f"  Revenue Forecast: ${stock_forecast['revenue_forecasted']:,.0f} (Growth: {stock_forecast.get('revenue_growth_rate', 0):.2f}%)")
-                    return True
-                else:
-                    print(f"⚠ Failed to load forecast for {ticker}")
-                    return False
-            else:
-                print(f"⚠ Could not calculate forecast for {ticker}")
-                return False
-                
-        except Exception as e:
-            print(f"Error generating current forecast for {ticker}: {e}")
-            return False
-    
-    def _generate_periodic_forecasts(self, company_id, ticker, price_data):
-        """
-        Generate forecasts periodically every 15 days across historical data range
-        
-        Args:
-            company_id: Company ID
-            ticker: Stock ticker
-            price_data: Historical price DataFrame
-            
-        Returns:
-            Boolean indicating success
-        """
-        try:
-            price_data = price_data.sort_values('Date').reset_index(drop=True)
-            
-            # Find valid interval points every 15 days
-            start_date = price_data.iloc[0]['Date']
-            end_date = price_data.iloc[-1]['Date']
-            
-            # Generate 15-day intervals
-            current_date = start_date
-            forecast_count = 0
-            failed_count = 0
-            
-            print(f"\n  Generating periodic forecasts every 15 days from {start_date.date()} to {end_date.date()}...")
-            
-            while current_date <= end_date:
-                # Find the index of the closest date
-                date_diff = (price_data['Date'] - current_date).abs()
-                closest_idx = date_diff.argmin()
-                
-                # Skip if we don't have enough data before this point
-                if closest_idx < 20:
-                    current_date += timedelta(days=15)
-                    continue
-                
-                # Skip if this date doesn't have 30 days of future data for target_date
-                future_data = price_data[price_data['Date'] > price_data.iloc[closest_idx]['Date']]
-                if len(future_data) < 5:  # At least some future data
-                    break
-                
-                try:
-                    forecast_date = price_data.iloc[closest_idx]['Date'].date()
-                    target_date = forecast_date + timedelta(days=30)
-                    
-                    # Calculate forecasts using data up to this point (integrated in stock price forecast)
-                    stock_forecast = self.calculate_stock_price_forecast(price_data, company_id=company_id, cutoff_index=closest_idx+1)
-                    
-                    if stock_forecast:
-                        # Load forecast with specific dates
-                        # Extract price, EPS, and revenue forecasts from the integrated calculation
-                        price_forecast_data = {
-                            'target_price': stock_forecast.get('target_price'),
-                            'recommendation': stock_forecast.get('recommendation'),
-                            'confidence_score': stock_forecast.get('confidence_score')
-                        }
-                        
-                        revenue_forecast_data = {
-                            'forecasted_annual_revenue': stock_forecast.get('revenue_forecasted')
-                        }
-                        
-                        eps_forecast_data = {
-                            'forecasted_eps': stock_forecast.get('eps_forecasted')
-                        }
-                        
-                        if self.load_forecast(company_id, price_forecast_data, revenue_forecast_data, eps_forecast_data,
-                                            forecast_date=forecast_date, target_date=target_date):
-                            forecast_count += 1
-                        else:
-                            failed_count += 1
-                    
-                except Exception as e:
-                    print(f"    ⚠ Error generating forecast for date {current_date.date()}: {e}")
-                    failed_count += 1
-                
-                # Move to next 15-day interval
-                current_date += timedelta(days=15)
-            
-            if forecast_count > 0:
-                print(f"  ✓ Generated {forecast_count} periodic forecasts")
-                if failed_count > 0:
-                    print(f"  ⚠ Failed to generate {failed_count} forecasts")
-                return True
-            else:
-                print(f"  ⚠ Could not generate any periodic forecasts for {ticker}")
-                return False
-                
-        except Exception as e:
-            print(f"Error generating periodic forecasts for {ticker}: {e}")
-            return False
-    
-    
-    def run_full_etl(self, enable_periodic_forecasts=False):
-        """
-        Execute complete ETL pipeline for all companies
-        
-        Args:
-            enable_periodic_forecasts: If True, generates forecasts for every 15 days
-                                      in the historical data range. If False, generates
-                                      only current forecasts. Default: False
-        """
+    def run_full_etl(self):
+        """Execute complete ETL pipeline for all companies"""
         if not self.connect():
             return
         
         print("\n" + "="*60)
         print("EQUITY RESEARCH DATABASE - ETL PIPELINE")
-        if enable_periodic_forecasts:
-            print("(With Periodic Forecasting: Every 15 Days)")
         print("="*60 + "\n")
         
         for company in self.target_companies:
@@ -1685,26 +1243,12 @@ class EquityETLPipeline:
                 print("⚠ No financial statement data extracted")
             
             # 4. Calculate Valuation Metrics
-            print(f"[4/6] Calculating valuation metrics...")
+            print(f"[4/5] Calculating valuation metrics...")
             if self.calculate_and_load_metrics(company_id, ticker):
                 print(f"✓ Valuation metrics calculated")
             
-            # 5. Generate and Load Forecasts
-            if enable_periodic_forecasts:
-                print(f"[5/6] Generating periodic forecasts (every 15 days)...")
-                if self.generate_and_load_forecasts(company_id, ticker, periodic=True):
-                    print(f"✓ Periodic forecasts generated and loaded")
-                else:
-                    print(f"⚠ Could not generate periodic forecasts for {ticker}")
-            else:
-                print(f"[5/6] Generating current forecasts...")
-                if self.generate_and_load_forecasts(company_id, ticker, periodic=False):
-                    print(f"✓ Current forecasts generated and loaded")
-                else:
-                    print(f"⚠ Could not generate forecasts for {ticker}")
-            
-            # 6. Rate limiting
-            print(f"[6/6] Waiting to avoid API rate limits...")
+            # 5. Rate limiting
+            print(f"[5/5] Waiting to avoid API rate limits...")
             time.sleep(2)
         
         print("\n" + "="*60)
@@ -1720,20 +1264,10 @@ if __name__ == "__main__":
     db_config = {
         'host': 'localhost',
         'user': 'root',
-        'database': 'EquityResearchDB',
+        'password': 'your_password',  # Change this
+        'database': 'equity_research_db'
     }
     
-    # Create ETL pipeline instance
+    # Run ETL Pipeline
     etl = EquityETLPipeline(db_config)
-    
-    # Run ETL Pipeline with current forecasts only
-    print("Running ETL Pipeline with current forecasts...")
-    etl.run_full_etl(enable_periodic_forecasts=True)
-    
-    # OPTIONAL: Run ETL Pipeline with periodic forecasts for every 15 days
-    # Uncomment the following line to enable periodic forecasting
-    # This will generate forecasts for every 15-day interval across the entire
-    # historical data range available (e.g., 2 years of data will generate ~48 forecasts per stock)
-    # Note: This will take significantly longer to run
-    # print("\nRunning ETL Pipeline with periodic forecasts...")
-    # etl.run_full_etl(enable_periodic_forecasts=True)
+    etl.run_full_etl()

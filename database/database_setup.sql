@@ -1,5 +1,3 @@
--- Equity Research Database Schema
--- MySQL 8.0+
 CREATE DATABASE IF NOT EXISTS EquityResearchDB;
 USE EquityResearchDB;
 -- Drop existing tables (in reverse order of dependencies)

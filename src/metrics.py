@@ -521,6 +521,7 @@ elif page == "Valuation Analysis":
         )
         
         # Scatter plot: P/E vs ROE
+        metrics = metrics[['ticker_symbol', 'company_name', 'sector_name', 'pe_ratio', 'roe', 'pb_ratio']].dropna()
         fig = px.scatter(
             metrics,
             x='roe',
@@ -712,7 +713,7 @@ elif page == "Forecast Analysis":
                     mode='markers',
                     name=rec,
                     marker=dict(
-                        size=rec_data['confidence_score'] * 20 + 5,
+                        size=rec_data['confidence_score'] * 10 + 5,
                         color=color_map.get(rec, '#cccccc'),
                         opacity=0.7,
                         line=dict(width=2, color='white')
