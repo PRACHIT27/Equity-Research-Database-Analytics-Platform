@@ -39,6 +39,7 @@ class EquityETLPipeline:
             {'ticker': 'GME', 'name': 'GameStop Corp.', 'sector': 'Consumer Cyclical'},
             {'ticker': 'BYND', 'name': 'BYD Company Ltd.', 'sector': 'Consumer Cyclical'},
             {'ticker': 'CAVA', 'name': 'CAVA Group, Inc.', 'sector': 'Consumer Cyclical'},
+            {'ticker': 'RTX', 'name': 'Raytheon Technologies Corporation', 'sector': 'Industrials'}
         ]
     
     def connect(self):
