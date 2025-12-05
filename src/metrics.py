@@ -8,6 +8,7 @@ import pandas as pd
 import mysql.connector
 import plotly.graph_objects as go
 import plotly.express as px
+import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
 # Page configuration
@@ -68,7 +69,7 @@ st.sidebar.markdown("### Navigation")
 page = st.sidebar.radio(
     "Select Page",
     ["Dashboard", "Company Research", "Stock Prices", "Financial Statements", 
-     "Valuation Analysis", "Sector Comparison"]
+     "Valuation Analysis", "Forecast Analysis", "Sector Comparison"]
 )
 
 # Session state for user
@@ -532,6 +533,407 @@ elif page == "Valuation Analysis":
         )
         
         st.plotly_chart(fig, use_container_width=True)
+
+# ====================
+# FORECAST ANALYSIS PAGE
+# ====================
+elif page == "Forecast Analysis":
+    st.markdown('<div class="main-header">🔮 Forecast Analysis & Trading Signals</div>', unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div class="section-header">📊 Trading Recommendations Based on Forecasts</div>
+    This page visualizes buy/hold/sell signals based on the forecasting model predictions.
+    """, unsafe_allow_html=True)
+    
+    # Get all stocks with forecasts
+    query_stocks = """
+    SELECT DISTINCT c.company_id, c.ticker_symbol, c.company_name, c.sector_id
+    FROM Companies c
+    INNER JOIN Forecasts f ON c.company_id = f.company_id
+    ORDER BY c.ticker_symbol
+    """
+    
+    stocks_df = execute_query(query_stocks)
+    
+    if not stocks_df.empty:
+        # Stock selector
+        selected_stock = st.selectbox(
+            "Select Stock",
+            stocks_df['ticker_symbol'].values,
+            key="forecast_stock"
+        )
+        
+        selected_company = stocks_df[stocks_df['ticker_symbol'] == selected_stock].iloc[0]
+        company_id = int(selected_company['company_id'])
+        
+        # Get forecast data for selected stock
+        query_forecasts = """
+        SELECT f.forecast_id,
+               c.ticker_symbol,
+               c.company_name,
+               f.forecast_date,
+               f.target_date,
+               f.target_price,
+               f.recommendation,
+               f.confidence_score,
+               f.eps_forecast,
+               f.revenue_forecast,
+               sp.close_price,
+               ROUND((f.target_price - sp.close_price) / sp.close_price * 100, 2) as expected_return_pct,
+               DATEDIFF(f.target_date, f.forecast_date) as forecast_days_ahead
+        FROM Forecasts f
+        JOIN Companies c ON f.company_id = c.company_id
+        LEFT JOIN StockPrices sp ON c.company_id = sp.company_id 
+            AND DATE(sp.trade_date) = DATE(f.forecast_date)
+        WHERE f.company_id = %s
+        ORDER BY f.forecast_date DESC
+        LIMIT 100
+        """
+        
+        forecasts = execute_query(query_forecasts, (company_id,))
+        
+        if not forecasts.empty:
+            # Display metrics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            latest_forecast = forecasts.iloc[0]
+            
+            with col1:
+                st.metric(
+                    "Current Stock Price",
+                    f"${latest_forecast['close_price']:.2f}" if latest_forecast['close_price'] else "N/A"
+                )
+            
+            with col2:
+                st.metric(
+                    "Target Price (30 days)",
+                    f"${latest_forecast['target_price']:.2f}" if latest_forecast['target_price'] else "N/A"
+                )
+            
+            with col3:
+                expected_return = latest_forecast['expected_return_pct']
+                if expected_return is not None:
+                    color = "green" if expected_return > 0 else "red"
+                    st.metric(
+                        "Expected Return",
+                        f"{expected_return:.2f}%",
+                    )
+                else:
+                    st.metric("Expected Return", "N/A")
+            
+            with col4:
+                confidence = latest_forecast['confidence_score']
+                st.metric(
+                    "Confidence Score",
+                    f"{confidence:.1%}" if confidence else "N/A"
+                )
+            
+            # Recommendation badge
+            rec = latest_forecast['recommendation']
+            
+            # Color mapping for recommendations
+            rec_colors = {
+                'Strong Buy': '🟢',
+                'Buy': '🟢',
+                'Hold': '🟡',
+                'Sell': '🔴',
+                'Strong Sell': '🔴'
+            }
+            
+            st.markdown(f"""
+            <div style="background-color: #f0f2f6; padding: 1.5rem; border-radius: 0.5rem; margin: 1rem 0;">
+                <h3 style="margin: 0; color: #2c3e50;">Current Recommendation</h3>
+                <h2 style="margin: 0.5rem 0; color: #1f77b4;">
+                    {rec_colors.get(rec, '⚪')} {rec}
+                </h2>
+                <p style="margin: 0.5rem 0; color: #555;">
+                    Forecast Date: {latest_forecast['forecast_date'] if pd.notna(latest_forecast['forecast_date']) else 'N/A'} | 
+                    Target Date: {latest_forecast['target_date'] if pd.notna(latest_forecast['target_date']) else 'N/A'}
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Historical forecasts timeline
+            st.markdown('<div class="section-header">📈 Forecast History</div>', unsafe_allow_html=True)
+            
+            # Filter for viewable data
+            display_forecasts = forecasts[['forecast_date', 'target_date', 'target_price', 'recommendation', 
+                                          'confidence_score', 'expected_return_pct', 'eps_forecast', 
+                                          'revenue_forecast']].copy()
+            display_forecasts['forecast_date'] = pd.to_datetime(display_forecasts['forecast_date'])
+            display_forecasts['target_date'] = pd.to_datetime(display_forecasts['target_date'])
+            print(display_forecasts)
+            print(display_forecasts.dtypes)
+            display_forecasts['forecast_date'] = display_forecasts['forecast_date'].dt.date
+            display_forecasts['target_date'] = display_forecasts['target_date'].dt.date
+            
+            st.dataframe(
+                display_forecasts.style.format({
+                    'target_price': '${:.2f}',
+                    'confidence_score': '{:.1%}',
+                    'expected_return_pct': '{:.2f}%',
+                    'eps_forecast': '{:.2f}',
+                    'revenue_forecast': '${:,.0f}'
+                }).background_gradient(
+                    subset=['expected_return_pct'],
+                    cmap='RdYlGn',
+                    vmin=-20,
+                    vmax=20
+                ),
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Recommendation timeline visualization
+            st.markdown('<div class="section-header">⏰ Trading Signal Timeline</div>', unsafe_allow_html=True)
+            
+            # Prepare data for timeline
+            timeline_data = forecasts[['forecast_date', 'recommendation', 'confidence_score', 'expected_return_pct']].copy()
+            timeline_data = timeline_data.sort_values('forecast_date')
+            
+            # Create timeline visualization
+            fig_timeline = go.Figure()
+            
+            # Define colors for recommendations
+            color_map = {
+                'Strong Buy': '#00cc00',
+                'Buy': '#7fff00',
+                'Hold': '#ffff00',
+                'Sell': '#ff9999',
+                'Strong Sell': '#ff0000'
+            }
+            
+            for rec in timeline_data['recommendation'].unique():
+                rec_data = timeline_data[timeline_data['recommendation'] == rec]
+                
+                fig_timeline.add_trace(go.Scatter(
+                    x=rec_data['forecast_date'],
+                    y=[rec] * len(rec_data),
+                    mode='markers',
+                    name=rec,
+                    marker=dict(
+                        size=rec_data['confidence_score'] * 20 + 5,
+                        color=color_map.get(rec, '#cccccc'),
+                        opacity=0.7,
+                        line=dict(width=2, color='white')
+                    ),
+                    text=[f"<b>{r}</b><br>Confidence: {c:.1%}<br>Expected Return: {e:.2f}%" 
+                          for r, c, e in zip(rec_data['recommendation'], 
+                                            rec_data['confidence_score'], 
+                                            rec_data['expected_return_pct'])],
+                    hovertemplate='<b>Forecast Date:</b> %{x}<br>%{text}<extra></extra>'
+                ))
+            
+            fig_timeline.update_layout(
+                title=f'{selected_stock} - Trading Signal Timeline',
+                xaxis_title='Forecast Date',
+                yaxis_title='Recommendation',
+                height=400,
+                hovermode='closest',
+                template='plotly_white'
+            )
+            
+            st.plotly_chart(fig_timeline, use_container_width=True)
+            
+            # Expected Return Timeline
+            st.markdown('<div class="section-header">📊 Expected Return Over Time</div>', unsafe_allow_html=True)
+            
+            fig_returns = go.Figure()
+            
+            fig_returns.add_trace(go.Scatter(
+                x=timeline_data['forecast_date'],
+                y=timeline_data['expected_return_pct'],
+                mode='lines+markers',
+                name='Expected Return %',
+                fill='tozeroy',
+                line=dict(color='#1f77b4', width=2),
+                marker=dict(size=8),
+                hovertemplate='<b>Date:</b> %{x}<br><b>Expected Return:</b> %{y:.2f}%<extra></extra>'
+            ))
+            
+            # Add 0% reference line
+            fig_returns.add_hline(y=0, line_dash="dash", line_color="red", opacity=0.5)
+            
+            fig_returns.update_layout(
+                title=f'{selected_stock} - Expected Return Forecast',
+                xaxis_title='Forecast Date',
+                yaxis_title='Expected Return (%)',
+                height=400,
+                template='plotly_white'
+            )
+            
+            st.plotly_chart(fig_returns, use_container_width=True)
+            
+            # Date-Time Action Calendar
+            st.markdown('<div class="section-header">📅 Buy/Hold/Sell Action Calendar</div>', unsafe_allow_html=True)
+            
+            # Create a detailed action calendar by date
+            action_calendar = forecasts[['forecast_date', 'target_date', 'recommendation', 'confidence_score', 
+                                        'expected_return_pct', 'target_price']].copy()
+            action_calendar = action_calendar.sort_values('forecast_date')
+            action_calendar['forecast_date'] = pd.to_datetime(action_calendar['forecast_date'])
+            action_calendar['target_date'] = pd.to_datetime(action_calendar['target_date'])
+            action_calendar['forecast_date'] = action_calendar['forecast_date'].dt.date
+            action_calendar['target_date'] = action_calendar['target_date'].dt.date
+            action_calendar['action'] = action_calendar['recommendation']
+            
+            # Create color mapping for actions
+            action_colors = {
+                'Strong Buy': '#00cc00',
+                'Buy': '#7fff00',
+                'Hold': '#ffff00',
+                'Sell': '#ff9999',
+                'Strong Sell': '#ff0000'
+            }
+            
+            # Display calendar view with HTML table
+            st.subheader("Action Calendar by Forecast Date")
+            
+            # Prepare data for calendar view
+            calendar_display = []
+            for _, row in action_calendar.iterrows():
+                action = row['action']
+                color = action_colors.get(action, '#cccccc')
+                calendar_display.append({
+                    'Forecast Date': row['forecast_date'],
+                    'Target Date': row['target_date'],
+                    'Action': action,
+                    'Confidence': f"{row['confidence_score']:.1%}",
+                    'Expected Return': f"{row['expected_return_pct']:.2f}%",
+                    'Target Price': f"${row['target_price']:.2f}"
+                })
+            
+            calendar_df = pd.DataFrame(calendar_display)
+            
+            # Display with color-coded background based on action
+            st.dataframe(
+                calendar_df.style.applymap(
+                    lambda v: f"background-color: {action_colors.get(v, '#ffffff')}; color: black; font-weight: bold;" if v in action_colors else "",
+                    subset=['Action']
+                ),
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Heatmap style calendar
+            st.subheader("Trading Signal Heatmap (Confidence x Date)")
+            
+            # Create pivot table for heatmap
+            heatmap_data = action_calendar.copy()
+            heatmap_data['Date'] = heatmap_data['forecast_date'].astype(str)
+            heatmap_pivot = heatmap_data.pivot_table(
+                values='confidence_score',
+                index='action',
+                columns='Date',
+                aggfunc='first'
+            )
+            
+            # Reorder index based on signal type
+            signal_order = ['Strong Buy', 'Buy', 'Hold', 'Sell', 'Strong Sell']
+            heatmap_pivot = heatmap_pivot.reindex([s for s in signal_order if s in heatmap_pivot.index])
+            
+            fig_heatmap = go.Figure(data=go.Heatmap(
+                z=heatmap_pivot.values,
+                x=heatmap_pivot.columns,
+                y=heatmap_pivot.index,
+                colorscale=[
+                    [0, '#ffffff'],
+                    [1, '#0066ff']
+                ],
+                hovertemplate='<b>Date:</b> %{x}<br><b>Signal:</b> %{y}<br><b>Confidence:</b> %{z:.1%}<extra></extra>',
+                colorbar=dict(title='Confidence')
+            ))
+            
+            fig_heatmap.update_layout(
+                title=f'{selected_stock} - Trading Signal Confidence Heatmap',
+                xaxis_title='Forecast Date',
+                yaxis_title='Trading Signal',
+                height=400,
+                template='plotly_white'
+            )
+            
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+            
+            # Action timeline with detailed info
+            st.subheader("Action Timeline (When to Buy, Hold, Sell)")
+            
+            # Create detailed timeline with dates
+            timeline_html = "<div style='background-color: #f8f9fa; padding: 20px; border-radius: 10px;'>"
+            timeline_html += "<h4 style='text-align: center; color: #2c3e50; margin-bottom: 20px;'>Trading Actions by Date</h4>"
+            
+            for idx, row in action_calendar.iterrows():
+                action = row['action']
+                color = action_colors.get(action, '#cccccc')
+                icon = '🟢' if 'Buy' in action else ('🟡' if action == 'Hold' else '🔴')
+                
+                # timeline_html += f"""
+                # <div style='background-color: {color}; padding: 12px 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid {color}; opacity: 0.8;'>
+                #     <div style='font-weight: bold; color: #000;'>
+                #         {icon} <b>{action}</b>
+                #     </div>
+                #     <div style='font-size: 0.9em; color: #333; margin-top: 5px;'>
+                #         📅 <b>Forecast Date:</b> {row['forecast_date']} | 
+                #         🎯 <b>Target Date:</b> {row['target_date']}
+                #     </div>
+                #     <div style='font-size: 0.9em; color: #333;'>
+                #         💰 <b>Target Price:</b> ${row['target_price']:.2f} | 
+                #         📈 <b>Expected Return:</b> {row['expected_return_pct']:.2f}% | 
+                #         🎯 <b>Confidence:</b> {row['confidence_score']:.1%}
+                #     </div>
+                # </div>
+                # """
+                timeline_html += f"<div style='background-color: {color}; padding: 12px 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid {color}; opacity: 0.8;'>"
+                timeline_html += f"<div style='font-weight: bold; color: #000;'>"
+                timeline_html += f"{icon} <b>{action}</b>"
+                timeline_html += "</div>"
+                timeline_html += "<div style='font-size: 0.9em; color: #333; margin-top: 5px;'>"
+                timeline_html += f"📅 <b>Forecast Date:</b> {row['forecast_date']} | 🎯 <b>Target Date:</b> {row['target_date']}"
+                timeline_html += f"</div>"
+                timeline_html += "<div style='font-size: 0.9em; color: #333;'>"
+                timeline_html += f"💰 <b>Target Price:</b> ${row['target_price']:.2f} | 📈 <b>Expected Return:</b> {row['expected_return_pct']:.2f}% | 🎯 <b>Confidence:</b> {row['confidence_score']:.1%}"
+                timeline_html += "</div>"
+                timeline_html += "</div>"
+            
+            timeline_html += "</div>"
+            st.markdown(timeline_html, unsafe_allow_html=True)
+            
+            # Recommendation distribution
+            st.markdown('<div class="section-header">🎯 Recommendation Distribution</div>', unsafe_allow_html=True)
+            
+            rec_counts = forecasts['recommendation'].value_counts()
+            
+            fig_rec = px.bar(
+                x=rec_counts.index,
+                y=rec_counts.values,
+                color=rec_counts.index,
+                color_discrete_map=color_map,
+                title=f'{selected_stock} - Recommendation Distribution',
+                labels={'x': 'Recommendation', 'y': 'Count'}
+            )
+            
+            st.plotly_chart(fig_rec, use_container_width=True)
+            
+            # Summary statistics
+            st.markdown('<div class="section-header">📋 Summary Statistics</div>', unsafe_allow_html=True)
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                avg_confidence = forecasts['confidence_score'].mean()
+                st.metric("Average Confidence", f"{avg_confidence:.1%}")
+            
+            with col2:
+                avg_return = forecasts['expected_return_pct'].mean()
+                st.metric("Average Expected Return", f"{avg_return:.2f}%")
+            
+            with col3:
+                bullish_count = len(forecasts[forecasts['recommendation'].isin(['Strong Buy', 'Buy'])])
+                bearish_count = len(forecasts[forecasts['recommendation'].isin(['Sell', 'Strong Sell'])])
+                st.metric("Bullish vs Bearish Signals", f"{bullish_count} : {bearish_count}")
+        else:
+            st.warning(f"No forecasts available for {selected_stock}")
+    else:
+        st.info("No stocks with forecasts found. Please run the ETL pipeline first.")
 
 # ====================
 # SECTOR COMPARISON PAGE
