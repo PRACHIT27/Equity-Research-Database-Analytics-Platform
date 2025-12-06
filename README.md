@@ -102,6 +102,15 @@ USER = 'root'          # Your MySQL username
 PASSWORD = ''          # Your MySQL password
 DATABASE = 'equity_research'
 ```
+Edit `utils/etl.py`:
+```python
+db_config = {
+        'host': 'localhost',
+        'user': '', # Your username
+        'password' : '', # your password
+        'database': 'equity_research',
+    }
+```
 
 ### Step 5: Install Python Dependencies
 ```bash
@@ -120,6 +129,8 @@ pip install -r requirements.txt
 
 ### Step 6: Run Application
 ```bash
+python utils/etl.py
+
 streamlit run app.py
 ```
 
@@ -217,12 +228,6 @@ equity-research-db/
 ✅ **Error Handling** with try-catch mechanisms  
 ✅ **Role-Based Access Control** (Admin, Analyst, Associate)  
 
-### Bonus Features (Extra Points)
-🎁 **Professional Web UI** (Streamlit) - *+5 points*  
-🎁 **Enterprise Architecture** (Repository + Service Pattern) - *+5 points*  
-🎁 **Complex Multi-table Joins** (>10 tables) - *+5 points*  
-🎁 **Advanced Analytics** with visualizations - *+5 points*  
-🎁 **Financial Calculations** (P/E ratios, ROE, moving averages) - *+3 points*  
 
 ---
 
@@ -303,25 +308,6 @@ Associate Account:
 | **Visualization** | Plotly 5.18.0 |
 | **Security** | bcrypt 4.1.2 |
 
-### Database Driver Usage
-**Important:** This project uses **pymysql** (direct SQL driver), **NOT** SQLAlchemy or any ORM.
-
-```python
-# Example: Direct SQL execution
-import pymysql
-
-connection = pymysql.connect(
-    host='localhost',
-    user='root',
-    password='',
-    database='equity_research'
-)
-
-cursor = connection.cursor()
-cursor.execute("SELECT * FROM Companies WHERE ticker = %s", ('AAPL',))
-results = cursor.fetchall()
-connection.close()
-```
 
 ### System Requirements
 - **RAM:** Minimum 4GB (8GB recommended)
@@ -344,77 +330,7 @@ connection.close()
 7. **Forecasts** - Analyst predictions and recommendations
 8. **UserActivityLog** - Audit trail
 9. **Watchlist** - User watchlists
-
-### Entity Relationships
-```
-Sectors (1) ←→ (M) Companies
-Companies (1) ←→ (M) FinancialStatements
-Companies (1) ←→ (M) StockPrices
-Companies (1) ←→ (M) ValuationMetrics
-Companies (1) ←→ (M) Forecasts
-Users (1) ←→ (M) UserActivityLog
-Users (1) ←→ (M) Watchlist
-Companies (1) ←→ (M) Watchlist
-```
-
-### Key Features
-- **Normalization:** All tables in 3rd Normal Form (3NF)
-- **Referential Integrity:** Foreign keys with CASCADE/RESTRICT
-- **Constraints:** CHECK, NOT NULL, UNIQUE, DEFAULT
-- **Indexes:** Optimized for common queries
-- **Triggers:** Auto-validation and logging
-- **Procedures:** Complex operations encapsulated
-- **Functions:** Reusable calculations
-
----
-
-## 🎨 Design Patterns
-
-### 1. Repository Pattern
-**Purpose:** Separate data access from business logic
-
-```python
-# repositories/company_repository.py
-class CompanyRepository(BaseRepository):
-    def find_by_ticker(self, ticker):
-        # Direct SQL query
-        query = "SELECT * FROM Companies WHERE ticker = %s"
-        return self.db.execute_query(query, (ticker,))
-```
-
-### 2. Service Layer Pattern
-**Purpose:** Encapsulate business logic and validation
-
-```python
-# services/company_service.py
-class CompanyService:
-    def create_company(self, ticker, name, ...):
-        # Validate inputs
-        self.validator.validate_ticker(ticker)
-        
-        # Business rules
-        if self.company_repo.find_by_ticker(ticker):
-            raise BusinessLogicError("Company exists")
-        
-        # Create
-        return self.company_repo.create(ticker, name, ...)
-```
-
-### 3. Singleton Pattern
-**Purpose:** Single database connection instance
-
-```python
-# core/connection.py
-class DatabaseConnection:
-    _instance = None
     
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-```
-
----
 
 ## 📊 Stored Procedures & Functions
 
@@ -465,55 +381,6 @@ SELECT CalculateDailyReturn('AAPL', '2024-11-05');
 7. **Confirm** deletion in database
 
 ---
-
-## 📝 Grading Criteria Checklist
-
-### Database Schema (30 points)
-- [x] 9 tables in 3NF
-- [x] Primary keys on all tables
-- [x] Foreign keys with ON DELETE/ON UPDATE
-- [x] Field constraints (NOT NULL, UNIQUE, CHECK, DEFAULT)
-- [x] Stored procedures (4+)
-- [x] User-defined functions (3+)
-- [x] Triggers (4+)
-- [x] Indexes for performance
-- [x] Complete dump file with sample data
-
-### Application (40 points)
-- [x] Complete CRUD for Companies
-- [x] Complete CRUD for Financial Statements
-- [x] Complete CRUD for Stock Prices
-- [x] Complete CRUD for Forecasts
-- [x] Complete CRUD for Users
-- [x] Modular code structure
-- [x] Error handling throughout
-- [x] Easy-to-use interface
-- [x] Database connectivity working
-
-### Report (10 points)
-- [x] README with setup instructions
-- [x] Technical specifications
-- [x] UML diagram
-- [x] Logical design
-- [x] User flow description
-- [x] Lessons learned section
-- [x] Future work section
-
-### Video/Presentation (10 points)
-- [x] Schema description
-- [x] CRUD demonstration (3 operations)
-- [x] Verification in MySQL Workbench
-- [x] Application functionality overview
-
-### Bonus Points (15 possible)
-- [x] Web UI (Streamlit) - 5 points
-- [x] Enterprise architecture - 5 points
-- [x] Complex analytics - 5 points
-
-**Estimated Total: 105/100 points** 🎯
-
----
-
 ## 🤝 Contributors
 
 **Group:** TupePSharmaS
@@ -521,58 +388,7 @@ SELECT CalculateDailyReturn('AAPL', '2024-11-05');
 - **Prachit Tupe** - Database design, Backend development
 - **Siddhant Sharma** - Frontend development, Testing
 
----
 
-## 📄 License
-
-This project is developed as part of academic coursework for Database Management Systems.
-
----
-
-## 📞 Support
-
-For issues or questions:
-1. Check the troubleshooting section below
-2. Review MySQL error logs
-3. Verify database configuration in `config/database.py`
-
----
-
-## 🔧 Troubleshooting
-
-### Issue: Cannot connect to database
-**Solution:**
-```bash
-# Check MySQL is running
-mysql.server status  # macOS
-systemctl status mysql  # Linux
-
-# Verify credentials
-mysql -u root -p
-
-# Check database exists
-SHOW DATABASES;
-```
-
-### Issue: Module not found
-**Solution:**
-```bash
-# Reinstall dependencies
-pip install -r requirements.txt
-
-# Verify Python version
-python --version  # Should be 3.11+
-```
-
-### Issue: Port already in use
-**Solution:**
-```bash
-# Streamlit default port is 8501
-# Use different port:
-streamlit run app.py --server.port 8502
-```
-
----
 
 ## 🎓 Lessons Learned
 
@@ -588,10 +404,8 @@ streamlit run app.py --server.port 8502
 2. **Machine Learning** - Predictive models for stock price forecasting
 3. **Advanced Analytics** - Portfolio optimization algorithms
 4. **Multi-user Collaboration** - Shared workspaces and reports
-5. **Mobile Application** - React Native companion app
-6. **Data Export** - PDF reports and Excel exports
-7. **Notification System** - Email alerts for price targets
-8. **API Development** - REST API for external integrations
+5. **Data Export** - PDF reports and Excel exports
+6. **Notification System** - Email alerts for price targets
 
 ---
 
