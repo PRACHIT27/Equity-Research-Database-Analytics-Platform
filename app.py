@@ -87,7 +87,7 @@ def initialize_controllers():
         }
         return controllers
     except Exception as e:
-        st.error(f"❌ Failed to initialize controllers: {e}")
+        st.error(f"Failed to initialize controllers: {e}")
         st.stop()
 
 # ========== SESSION STATE MANAGEMENT ==========
@@ -177,38 +177,41 @@ def show_main_app(controllers):
         st.rerun()
 
     # Route to appropriate page using controllers
-    if selected_page == "🏠 Dashboard":
+    if selected_page == "Dashboard":
         show_dashboard(controllers)
 
-    elif selected_page == "🏢 Companies":
+    elif selected_page == "Companies":
         show_companies(controllers, permissions)
 
-    elif selected_page == "🏢 Company Research":
+    elif selected_page == "Company Research":
         show_company_research(controllers)
 
-    elif selected_page == "📈 Stock Prices":
+    elif selected_page == "Stock Prices":
         show_stock_prices(controllers, permissions)
 
-    elif selected_page == "🔮 Forecasts":
-        show_forecasts(controllers, permissions)
+    elif selected_page == "Forecast":
+        if permissions.get('can_create'):
+            show_forecasts(controllers, permissions)
+        else:
+            st.error("You don't have permission to access Forecast")
 
-    elif selected_page == "📊 Valuation Metrics":
+    elif selected_page == "Valuation Metrics":
         show_valuation_metrics(controllers, permissions)
 
-    elif selected_page == "📄 Financial Statements":
+    elif selected_page == "Financial Statements":
         show_financial_statements(controllers, permissions)
 
-    elif selected_page == "👥 User Management":
+    elif selected_page == "User Management":
         if permissions.get('can_manage_users'):
             show_user_management(controllers, permissions)
         else:
-            st.error("❌ You don't have permission to access User Management")
+            st.error("You don't have permission to access User Management")
 
-    elif selected_page == "📈 Analytics":
+    elif selected_page == "Analytics":
         if permissions.get('can_execute_reports'):
             show_analytics(controllers, permissions)
         else:
-            st.error("❌ You don't have permission to access Analytics")
+            st.error("You don't have permission to access Analytics")
 
     else:
         st.info("Page under construction")
@@ -236,7 +239,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        st.error(f"❌ Application Error: {e}")
+        st.error(f"Application Error: {e}")
         import traceback
         with st.expander("Show Technical Details"):
             st.code(traceback.format_exc())

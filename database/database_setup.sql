@@ -1,25 +1,15 @@
--- Equity Research Database Schema
--- MySQL 8.0+
-CREATE DATABASE IF NOT EXISTS EquityResearchDB;
-USE EquityResearchDB;
--- Drop existing tables (in reverse order of dependencies)
-DROP TABLE IF EXISTS Forecasts;
-DROP TABLE IF EXISTS ValuationMetrics;
-DROP TABLE IF EXISTS StockPrices;
-DROP TABLE IF EXISTS CashFlowStatements;
-DROP TABLE IF EXISTS BalanceSheets;
-DROP TABLE IF EXISTS IncomeStatements;
-DROP TABLE IF EXISTS FinancialStatements;
-DROP TABLE IF EXISTS Companies;
-DROP TABLE IF EXISTS Sectors;
-DROP TABLE IF EXISTS Users;
+DROP DATABASE IF EXISTS equity_research;
+CREATE DATABASE equity_research;
+USE equity_research;
 
-CREATE TABLE Sector (
-                        sector_id INT PRIMARY KEY,
-                        sector_name VARCHAR(100) NOT NULL UNIQUE,
-                        industry_category VARCHAR(100),
-                        sector_index_ticker VARCHAR(20),
-                        INDEX idx_sector_name (sector_name)
+
+-- 1. Sector Table
+CREATE TABLE Sectors (
+                         sector_id INT PRIMARY KEY,
+                         sector_name VARCHAR(100) NOT NULL UNIQUE,
+                         industry_category VARCHAR(100),
+                         sector_index_ticker VARCHAR(20),
+                         INDEX idx_sector_name (sector_name)
 );
 
 CREATE TABLE Permission (
@@ -60,35 +50,54 @@ CREATE TABLE Department (
 );
 
 
-CREATE TABLE User (
-                      user_id INT AUTO_INCREMENT PRIMARY KEY,
-                      username VARCHAR(50) NOT NULL UNIQUE,
-                      email VARCHAR(100) NOT NULL UNIQUE,
-                      password_hash VARCHAR(255) NOT NULL,
-                      full_name VARCHAR(100),
-                      role_id INT NOT NULL,
-                      department_id INT,
-                      phone_number VARCHAR(20),
-                      created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                      last_login TIMESTAMP NULL,
-                      is_active BOOLEAN DEFAULT TRUE,
+CREATE TABLE Users (
+                       user_id INT AUTO_INCREMENT PRIMARY KEY,
+                       username VARCHAR(50) NOT NULL UNIQUE,
+                       email VARCHAR(100) NOT NULL UNIQUE,
+                       password_hash VARCHAR(255) NOT NULL,
+                       full_name VARCHAR(100),
+                       role_id INT NOT NULL,
+                       department_id INT,
+                       phone_number VARCHAR(20),
+                       created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                       last_login TIMESTAMP NULL,
+                       is_active BOOLEAN DEFAULT TRUE,
 
-                      days_since_last_login INT,
+                       days_since_last_login INT,
 
-                      CONSTRAINT fk_user_role
-                          FOREIGN KEY (role_id) REFERENCES Role(role_id)
-                              ON DELETE RESTRICT
-                              ON UPDATE CASCADE,
+                       CONSTRAINT fk_user_role
+                           FOREIGN KEY (role_id) REFERENCES Role(role_id)
+                               ON DELETE RESTRICT
+                               ON UPDATE CASCADE,
 
-                      CONSTRAINT fk_user_department
-                          FOREIGN KEY (department_id) REFERENCES Department(department_id)
-                              ON DELETE SET NULL  -- If department deleted, set to NULL
-                              ON UPDATE CASCADE,
+                       CONSTRAINT fk_user_department
+                           FOREIGN KEY (department_id) REFERENCES Department(department_id)
+                               ON DELETE SET NULL  -- If department deleted, set to NULL
+                               ON UPDATE CASCADE,
 
-                      INDEX idx_username (username),
-                      INDEX idx_email (email),
-                      INDEX idx_role_id (role_id),
-                      INDEX idx_department_id (department_id)
+                       INDEX idx_username (username),
+                       INDEX idx_email (email),
+                       INDEX idx_role_id (role_id),
+                       INDEX idx_department_id (department_id)
+);
+
+CREATE TABLE Companies (
+                           company_id INT PRIMARY KEY AUTO_INCREMENT,
+                           ticker_symbol VARCHAR(10) UNIQUE NOT NULL,
+                           company_name VARCHAR(200) NOT NULL,
+                           sector_id INT NOT NULL,
+                           market_cap DECIMAL(20, 2),
+                           country VARCHAR(100),
+                           incorporation_date DATE,
+                           description TEXT,
+                           exchange VARCHAR(50),
+                           currency VARCHAR(3) DEFAULT 'USD',
+                           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                           FOREIGN KEY (sector_id) REFERENCES Sectors(sector_id) ON DELETE RESTRICT,
+                           INDEX idx_ticker (ticker_symbol),
+                           INDEX idx_sector (sector_id),
+                           INDEX idx_market_cap (market_cap)
 );
 
 -- Financial Statements (Superclass)
@@ -264,17 +273,189 @@ WHERE vm.calculation_date = (
     WHERE company_id = c.company_id
 );
 
--- Sample Users (passwords should be hashed in production)
-INSERT INTO Users (username, password_hash, role, email) VALUES
-                                                             ('admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYzpLHJ5xNe', 'Admin', 'admin@equityresearch.com'),
-                                                             ('analyst1', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYzpLHJ5xNe', 'Analyst', 'analyst1@equityresearch.com'),
-                                                             ('associate1', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYzpLHJ5xNe', 'Associate', 'associate1@equityresearch.com');
+INSERT INTO Permission (
+    permission_level, level_name, level_description,
+    can_create, can_read, can_update, can_delete,
+    can_execute_reports, can_manage_users, can_approve
+)
+VALUES
+    (1, 'Analyst', 'Entry-level research role', FALSE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE),
+    (3, 'Associate', 'Higher-level research role, can create content', TRUE, TRUE, TRUE, FALSE, TRUE, FALSE, TRUE),
+    (10, 'Admin', 'Full system access', TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE);
 
--- Sample Sectors
-INSERT INTO Sectors (sector_name, description) VALUES
-                                                   ('Technology', 'Technology companies including software, hardware, and semiconductors'),
-                                                   ('Financial Services', 'Banks, insurance, investment firms, and financial technology'),
-                                                   ('Healthcare', 'Pharmaceuticals, biotechnology, medical devices, and healthcare services'),
-                                                   ('Consumer Discretionary', 'Retail, automotive, leisure, and consumer goods'),
-                                                   ('Energy', 'Oil & gas, renewable energy, and utilities'),
-                                                   ('Industrials', 'Manufacturing, aerospace, defense, and infrastructure');
+
+INSERT INTO Role (role_name, role_description, permission_level)
+VALUES
+    ('Admin', 'System administrator', 10),
+    ('Associate', 'Senior research role supporting lead analyst', 3),
+    ('Analyst', 'Junior research role', 1);
+
+
+INSERT INTO Department (department_name)
+VALUES
+    ('Equity Research'),
+    ('Quantitative Research'),
+    ('Macroeconomic Research'),
+    ('Risk Management'),
+    ('Compliance'),
+    ('Technology & Data');
+
+
+INSERT INTO Users (username, password_hash, role_id, email, department_id)
+VALUES
+    ('admin',
+     '$2a$12$jdKmNAeDdyZ//ZtK90qyVurasMs/bIdNQJodWZoAhOyvCyRJpN1cC',
+     1, 'admin@equityresearch.com', 6),
+
+    ('analyst1',
+     '$2a$12$jdKmNAeDdyZ//ZtK90qyVurasMs/bIdNQJodWZoAhOyvCyRJpN1cC',
+     2, 'analyst1@equityresearch.com', 1),
+
+    ('associate1',
+     '$2a$12$jdKmNAeDdyZ//ZtK90qyVurasMs/bIdNQJodWZoAhOyvCyRJpN1cC',
+     3, 'associate1@equityresearch.com', 1);
+
+
+INSERT INTO Sectors (sector_id, sector_name, industry_category, sector_index_ticker)
+VALUES
+    (1, 'Technology', 'Software, Semiconductors, IT Services', 'XLK'),
+    (2, 'Financial Services', 'Banks, Insurance, FinTech', 'XLF'),
+    (3, 'Healthcare', 'Biotech, Pharmaceuticals, Medical Devices', 'XLV'),
+    (4, 'Consumer Discretionary', 'Retail, Automobiles, Luxury Goods', 'XLY'),
+    (5, 'Energy', 'Oil & Gas, Renewables, Utilities', 'XLE'),
+    (6, 'Industrials', 'Manufacturing, Aerospace, Transportation', 'XLI'),
+    (7, 'Communications Services', 'Telecom, Media, Entertainment', 'XLC'),
+    (8, 'Consumer Staples', 'Food, Beverages, Household Products', 'XLP'),
+    (9, 'Real Estate', 'REITs, Commercial Real Estate', 'XLRE'),
+    (10, 'Materials', 'Chemicals, Metals, Mining', 'XLB'),
+    (11, 'Utilities', 'Electricity, Water, Infrastructure', 'XLU');
+
+DELIMITER //
+
+-- Procedure 1: Authenticate User
+CREATE PROCEDURE AuthenticateUser(
+    IN p_username VARCHAR(50),
+    IN p_password_hash VARCHAR(255)
+)
+BEGIN
+SELECT
+    u.user_id,
+    u.username,
+    u.email,
+    u.full_name,
+    u.role_id,
+    u.is_active,
+    r.role_name,
+    r.permission_level,
+    p.level_name,
+    p.can_create,
+    p.can_read,
+    p.can_update,
+    p.can_delete,
+    p.can_execute_reports,
+    p.can_manage_users,
+    p.can_approve,
+    d.department_name
+FROM Users u
+         INNER JOIN Role r ON u.role_id = r.role_id
+         INNER JOIN Permission p ON r.permission_level = p.permission_level
+         INNER JOIN Department d on u.department_id = d.department_id
+WHERE u.username = p_username
+  AND u.password_hash = p_password_hash
+  AND u.is_active = TRUE;
+
+UPDATE Users
+SET last_login = CURRENT_TIMESTAMP,
+    days_since_last_login = 0
+WHERE username = p_username;
+END //
+
+CREATE PROCEDURE GetTopPerformers(
+    IN p_days INT,
+    IN p_limit INT
+)
+BEGIN
+SELECT
+    c.company_id,
+    c.ticker_symbol,
+    c.company_name,
+    s.sector_name,
+    MIN(sp.close_price) as start_price,
+    MAX(sp.close_price) as end_price,
+    ((MAX(sp.close_price) - MIN(sp.close_price)) / MIN(sp.close_price)) * 100 as return_pct
+FROM StockPrices sp
+         INNER JOIN Companies c ON sp.company_id = c.company_id
+         INNER JOIN Sectors s ON c.sector_id = s.sector_id
+WHERE sp.trade_date >= DATE_SUB(CURDATE(), INTERVAL p_days DAY)
+GROUP BY c.company_id, c.ticker_symbol, c.company_name, s.sector_name
+ORDER BY return_pct DESC
+    LIMIT p_limit;
+END //
+
+CREATE PROCEDURE DeleteCompanyWithDependencies(IN p_company_id INT)
+BEGIN
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+BEGIN
+ROLLBACK;
+RESIGNAL;
+END;
+
+START TRANSACTION;
+
+IF NOT EXISTS (SELECT 1 FROM Companies WHERE company_id = p_company_id) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Company not found';
+END IF;
+
+DELETE FROM Companies WHERE company_id = p_company_id;
+
+COMMIT;
+END //
+
+DELIMITER ;
+
+DROP FUNCTION GetMostActiveDepartment
+    DELIMITER //
+CREATE FUNCTION GetMostActiveDepartment()
+    RETURNS VARCHAR(100)
+    DETERMINISTIC
+    READS SQL DATA
+    COMMENT 'Get name of department with most active users'
+BEGIN
+    DECLARE dept_name VARCHAR(100);
+
+SELECT d.department_name INTO dept_name
+FROM Department d
+         LEFT JOIN Users u ON d.department_id = u.department_id AND u.is_active = TRUE
+GROUP BY d.department_id, d.department_name
+ORDER BY COUNT(u.user_id) DESC
+    LIMIT 1;
+
+RETURN IFNULL(dept_name, 'No Active Departments');
+END//
+
+DELIMITER //
+CREATE TRIGGER trg_before_user_update
+    BEFORE UPDATE ON Users
+    FOR EACH ROW
+BEGIN
+    IF NEW.last_login IS NOT NULL AND NEW.last_login != OLD.last_login THEN
+        SET NEW.days_since_last_login = 0;
+END IF;
+END //
+
+DELIMITER //
+
+CREATE EVENT IF NOT EXISTS evt_update_user_inactive_days
+ON SCHEDULE EVERY 1 DAY
+STARTS CURRENT_DATE + INTERVAL 1 DAY
+DO
+BEGIN
+    -- Update days_since_last_login for all users
+UPDATE Users
+SET days_since_last_login = CASE
+                                WHEN last_login IS NULL THEN NULL
+                                ELSE DATEDIFF(CURDATE(), DATE(last_login))
+    END
+WHERE is_active = TRUE;
+END //

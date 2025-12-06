@@ -306,7 +306,7 @@ class DepartmentRepository(BaseRepository):
                     d.department_name,
                     COUNT(u.user_id) as user_count
                 FROM Department d
-                         LEFT JOIN User u ON d.department_id = u.department_id
+                         LEFT JOIN Users u ON d.department_id = u.department_id
                 GROUP BY d.department_id, d.department_name
                 ORDER BY d.department_name \
                 """
@@ -328,3 +328,14 @@ class DepartmentRepository(BaseRepository):
 
         query = "DELETE FROM Department WHERE department_id = %s"
         return self.execute_custom_update(query, (department_id,))
+
+    def get_dept_count(self) -> str:
+        """
+        Check if user has permission using database function.
+        Uses: HasPermission(user_id, permission_type)
+        """
+        try:
+            result = self.call_function('GetMostActiveDepartment')
+            return result
+        except:
+            return "No dept is active"

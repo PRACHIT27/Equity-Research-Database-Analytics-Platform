@@ -240,8 +240,6 @@ def show_user_management(controllers, permissions):
                 if user_data:
                     user = user_data
 
-                    print(user)
-
                     with st.form("update_user_form"):
                         col1, col2 = st.columns(2)
 
@@ -256,18 +254,18 @@ def show_user_management(controllers, permissions):
 
                         submitted = st.form_submit_button("💾 Update User", use_container_width=True, type="primary")
 
-                    if submitted:
-                        print("reached")
-                        try:
-                            controllers['user'].update_user(
-                                new_full_name, new_email, new_phone, is_active, user_id
-                            )
+                        if submitted:
+                            try:
+                                controllers['user'].update_user(user_id,
+                                    new_full_name, new_email, new_phone, is_active
+                                )
 
-                            st.success("✅ User updated successfully!")
-                            st.rerun()
 
-                        except Exception as e:
-                            st.error(f"❌ Error: {e}")
+                                st.success("✅ User updated successfully!")
+                                st.balloons()
+
+                            except Exception as e:
+                                st.error(f"❌ Error: {e}")
             else:
                 st.info("No users available")
 
@@ -297,9 +295,8 @@ def show_user_management(controllers, permissions):
 
                 if st.button("🗑️ Delete User", type="primary", disabled=not confirm):
                     try:
-                        controllers['user'].delete_user(user_id)
+                        controllers['user'].delete_user(user_id, True)
                         st.success("✅ User deleted successfully!")
-                        st.rerun()
 
                     except Exception as e:
                         st.error(f"❌ Error: {e}")
@@ -313,13 +310,18 @@ def show_user_management(controllers, permissions):
     with tab_objects[4]:
         st.markdown("### 🏢 Department Management")
 
+        department_most_active = controllers['user'].get_active_dept()
+
+        st.markdown(f"Most active department '{department_most_active}'")
+
         col1, col2 = st.columns(2)
+
 
         with col1:
             st.markdown("#### 📋 All Departments")
 
             try:
-                departments = controllers['department'].get_with_user_counts()
+                departments = controllers['user'].get_all_departments()
 
                 if departments:
                     df = pd.DataFrame(departments)

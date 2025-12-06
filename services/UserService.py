@@ -204,14 +204,19 @@ class UserService:
         if not confirm:
             raise ValidationError("User deletion must be confirmed")
 
+        print(user_id)
         # Check user exists (call repository - NO SQL!)
         user = self.user_repo.find_by_id_full(user_id)
+
+        print(user)
 
         if not user:
             raise BusinessLogicError(f"User with ID {user_id} not found")
 
         # Delete user (call repository - NO SQL!)
         rows = self.user_repo.delete_by_id(user_id)
+
+        print(rows)
 
         if rows == 0:
             raise BusinessLogicError("Failed to delete user")
@@ -226,6 +231,10 @@ class UserService:
     def get_all_departments(self):
         """Get all departments with user counts (call repository - NO SQL!)"""
         return self.dept_repo.get_with_user_counts()
+
+    def get_active_dept(self):
+        """Get all departments with user counts (call repository - NO SQL!)"""
+        return self.dept_repo.get_dept_count()
 
     def get_department_by_id(self, department_id: int) -> Dict[str, Any]:
         """Get department by ID (call repository - NO SQL!)"""

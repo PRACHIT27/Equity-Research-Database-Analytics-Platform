@@ -130,6 +130,7 @@ class UserController:
             )
             return result
         except Exception as e:
+            print(e)
             return {
                 'success': False,
                 'message': str(e)
@@ -174,6 +175,13 @@ class UserController:
         """Get all departments with user counts through service"""
         try:
             return self._user_service.get_all_departments()
+        except Exception as e:
+            return []
+
+    def get_active_dept(self):
+        """Get all departments with user counts through service"""
+        try:
+            return self._user_service.get_active_dept()
         except Exception as e:
             return []
 
