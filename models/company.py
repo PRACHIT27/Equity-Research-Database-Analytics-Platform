@@ -1,1 +1,0 @@
-"""\nCompany Module\nTODO: Implement functionality\n"""\n\n
