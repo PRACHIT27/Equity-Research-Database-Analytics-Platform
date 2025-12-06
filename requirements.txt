@@ -1,8 +1,10 @@
 # Database
 pymysql==1.1.0
+yfinance
 
 # Web Framework
 streamlit==1.29.0
+matplotlib
 
 # Data Processing
 pandas==2.1.4
