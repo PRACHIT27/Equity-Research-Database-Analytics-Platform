@@ -11,27 +11,27 @@ def create_project_structure():
     # Define project structure
     structure = {
         'config': ['__init__.py', 'database.py'],
-        'core': ['__init__.py', 'connection.py'],
+        'core': ['__init__.py', 'DatabaseConnection.py'],
         'repositories': [
             '__init__.py',
-            'base_repository.py',
-            'company_repository.py',
-            'financial_repository.py',
-            'price_repository.py',
-            'forecast_repository.py',
-            'user_repository.py',
+            'BaseRepository.py',
+            'CompanyRepository.py',
+            'FinancialRepository.py',
+            'PriceRepository.py',
+            'ForecastRepository.py',
+            'UserRepository.py',
             'valuation_repository.py',
             'watchlist_repository.py'
         ],
         'services': [
             '__init__.py',
-            'company_service.py',
-            'financial_service.py',
-            'price_service.py',
-            'forecast_service.py',
-            'user_service.py',
-            'valuation_service.py',
-            'analytics_service.py'
+            'CompanyService.py',
+            'FinancialService.py',
+            'PriceService.py',
+            'ForecastService.py',
+            'UserService.py',
+            'ValuationService.py',
+            'AnalyticsService.py'
         ],
         'models': [
             '__init__.py',
@@ -58,7 +58,6 @@ def create_project_structure():
             'forecasts.py',
             'valuation_metrics.py',
             'users.py',
-            'watchlist.py',
             'analytics.py'
         ],
         'ui/components': [
