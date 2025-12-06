@@ -214,23 +214,6 @@ equity-research-db/
 
 ---
 
-## ✨ Features
-
-### Core Features (Required)
-✅ **Complete CRUD Operations** on all entities  
-✅ **9 Normalized Tables** (3NF) with proper relationships  
-✅ **Primary & Foreign Keys** with ON UPDATE/ON DELETE clauses  
-✅ **Stored Procedures** (GetCompanyOverview, InsertStockPrice, etc.)  
-✅ **User-Defined Functions** (CalculateDailyReturn, GetLatestPrice)  
-✅ **Triggers** (Validation, Logging, Auto-updates)  
-✅ **Field Constraints** (NOT NULL, UNIQUE, CHECK, DEFAULT)  
-✅ **Indexes** for performance optimization  
-✅ **Error Handling** with try-catch mechanisms  
-✅ **Role-Based Access Control** (Admin, Analyst, Associate)  
-
-
----
-
 ## 📖 Usage Guide
 
 ### Login Credentials (Demo)
@@ -319,7 +302,7 @@ Associate Account:
 
 ## 🗄️ Database Schema
 
-### Tables (9 Total - 2-Person Group Requirement)
+### Tables
 
 1. **Sectors** - Industry sectors
 2. **Companies** - Company master data
